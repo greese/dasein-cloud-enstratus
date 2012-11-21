@@ -40,12 +40,11 @@ import java.util.Collections;
 import java.util.Locale;
 
 /**
- * Implements data center services for Enstratus describing the different Enstratus regions. This class maps
- * Enstratus data centers to Dasein Cloud regions. Enstratus regions are ignored.
- * <p>Created by George Reese: 10/25/12 7:18 PM</p>
+ * Maps enStratus regions and data centers into Dasein Cloud regions and data centers.
+ * <p>Created by George Reese: 11/22/12 4:35 PM</p>
  * @author George Reese
- * @version 2012.09 initial version
- * @since 2012.09
+ * @version 2013.01 initial version
+ * @since 2013.01
  */
 public class DataCenters implements DataCenterServices {
     static private final Logger logger = Enstratus.getLogger(DataCenters.class);

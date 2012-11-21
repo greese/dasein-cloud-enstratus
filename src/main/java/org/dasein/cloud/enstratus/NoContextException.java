@@ -18,10 +18,10 @@ package org.dasein.cloud.enstratus;
 
 /**
  * Simple error representing a failure to set up a configuration.
- * <p>Created by George Reese: 10/30/12 1:10 PM</p>
+ * <p>Created by George Reese: 11/22/12 4:34 PM</p>
  * @author George Reese
- * @version 2012.09 initial version
- * @since 2012.09
+ * @version 2013.01 initial version
+ * @since 2013.01
  */
 public class NoContextException extends EnstratusConfigurationException {
     public NoContextException() { super("No context was set for this request"); }

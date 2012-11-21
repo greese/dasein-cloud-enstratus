@@ -24,10 +24,10 @@ import javax.annotation.Nonnull;
 
 /**
  * Base exception class for errors that occur in Enstratus.
- * <p>Created by George Reese: 10/30/12 1:11 PM</p>
+ * <p>Created by George Reese: 11/22/12 4:34 PM</p>
  * @author George Reese
- * @version 2012.09 initial version
- * @since 2012.09
+ * @version 2013.01 initial version
+ * @since 2013.01
  */
 public class EnstratusException extends CloudException {
 
