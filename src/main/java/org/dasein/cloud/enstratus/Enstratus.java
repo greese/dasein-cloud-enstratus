@@ -4,6 +4,7 @@ import org.apache.log4j.Logger;
 import org.dasein.cloud.AbstractCloud;
 import org.dasein.cloud.CloudException;
 import org.dasein.cloud.ProviderContext;
+import org.dasein.cloud.enstratus.compute.Compute;
 import org.json.JSONObject;
 
 import javax.annotation.Nonnegative;
@@ -65,6 +66,11 @@ public class Enstratus extends AbstractCloud {
     }
 
     @Override
+    public @Nonnull Compute getComputeServices() {
+        return new Compute(this);
+    }
+
+    @Override
     public @Nonnull DataCenters getDataCenterServices() {
         return new DataCenters(this);
     }
@@ -81,7 +87,7 @@ public class Enstratus extends AbstractCloud {
         if( date == null || date.equals("") ) {
             return 0L;
         }
-        SimpleDateFormat fmt = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ");
+        SimpleDateFormat fmt = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
 
         try {
             return fmt.parse(date).getTime();
@@ -106,13 +112,13 @@ public class Enstratus extends AbstractCloud {
             try {
                 String accessKey = new String(ctx.getAccessPublic(), "utf-8");
                 EnstratusMethod method = new EnstratusMethod(this);
-                EnstratusMethod.APIResponse r = method.get(API_KEY, accessKey);
+                APIResponse r = method.get("testContext", API_KEY, accessKey);
 
-                if( r.code != EnstratusMethod.OK || r.json == null ) {
+                if( r.getCode() != EnstratusMethod.OK || r.getJSON() == null ) {
                     return null;
                 }
-                if( r.json.has("account") ) {
-                    JSONObject account = r.json.getJSONObject("account");
+                if( r.getJSON().has("account") ) {
+                    JSONObject account = r.getJSON().getJSONObject("account");
 
                     if( account.has("accountId") ) {
                         return account.getString("accountId");

@@ -111,14 +111,15 @@ public class DataCenters implements DataCenterServices {
             }
             EnstratusMethod method = new EnstratusMethod(provider);
 
-            EnstratusMethod.APIResponse r = method.get(DATA_CENTER, null, new BasicNameValuePair("regionId", providerRegionId));
+            APIResponse r = method.get("listDataCenters.get", DATA_CENTER, null, new BasicNameValuePair("regionId", providerRegionId));
 
-            if( r.code == EnstratusMethod.OK ) {
+            if( r.getCode() == EnstratusMethod.OK ) {
                 ArrayList<DataCenter> dataCenters = new ArrayList<DataCenter>();
+                JSONObject json = r.getJSON();
 
-                if( r.json.has("dataCenters") ) {
+                if( json.has("dataCenters") ) {
                     try {
-                        JSONArray list = r.json.getJSONArray("dataCenters");
+                        JSONArray list = json.getJSONArray("dataCenters");
 
                         for( int i=0; i<list.length(); i++ ) {
                             DataCenter dc = toDataCenter(list.getJSONObject(i));
@@ -161,13 +162,15 @@ public class DataCenters implements DataCenterServices {
             }
 
             EnstratusMethod method = new EnstratusMethod(provider);
-            EnstratusMethod.APIResponse r = method.get(REGION, null);
+            APIResponse r = method.get("listRegions.get", REGION, null);
 
-            if( r.code == EnstratusMethod.OK ) {
+            if( r.getCode() == EnstratusMethod.OK ) {
+                JSONObject json = r.getJSON();
+
                 regions = new ArrayList<Region>();
-                if( r.json.has("regions") ) {
+                if( json.has("regions") ) {
                     try {
-                        JSONArray list = r.json.getJSONArray("regions");
+                        JSONArray list = json.getJSONArray("regions");
 
                         for( int i=0; i<list.length(); i++ ) {
                             Region region = toRegion(list.getJSONObject(i));
@@ -182,6 +185,7 @@ public class DataCenters implements DataCenterServices {
                         throw new CloudException(e);
                     }
                 }
+                cache.put(ctx, regions);
                 return regions;
             }
             logger.error("The enStratus regions endpoint did not provide any data and did not error");

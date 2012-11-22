@@ -32,6 +32,7 @@ import org.apache.http.client.utils.URLEncodedUtils;
 import org.apache.http.conn.params.ConnRoutePNames;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.DefaultHttpClient;
+import org.apache.http.message.BasicNameValuePair;
 import org.apache.http.params.BasicHttpParams;
 import org.apache.http.params.CoreConnectionPNames;
 import org.apache.http.params.HttpParams;
@@ -43,6 +44,7 @@ import org.dasein.cloud.CloudErrorType;
 import org.dasein.cloud.CloudException;
 import org.dasein.cloud.InternalException;
 import org.dasein.cloud.ProviderContext;
+import org.dasein.cloud.enstratus.compute.DetailLevel;
 import org.dasein.cloud.util.APITrace;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -52,7 +54,6 @@ import javax.annotation.Nullable;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.UnsupportedEncodingException;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -84,12 +85,6 @@ public class EnstratusMethod {
     static public final int NO_CONTENT     = 204;
     static public final int BAD_REQUEST    = 400;
     static public final int NOT_FOUND      = 404;
-
-    static public class APIResponse {
-        public int code;
-        public JSONObject json;
-        public InputStream data;
-    }
 
     private Enstratus provider;
 
@@ -205,12 +200,99 @@ public class EnstratusMethod {
         }
     }
 
-    public @Nonnull APIResponse get(@Nonnull String resource, @Nullable String id, @Nullable NameValuePair ... parameters) throws InternalException, CloudException {
+    public @Nonnull APIResponse get(final @Nonnull String operation, final @Nonnull String resource, final @Nullable String id, final @Nullable NameValuePair ... parameters) throws InternalException, CloudException {
+        final APIResponse response = new APIResponse();
+
+        Thread t = new Thread() {
+            public void run() {
+                try {
+                    APITrace.begin(provider, operation);
+                    try {
+                        try {
+                            get(response, null, 1, resource, id, DetailLevel.basic, parameters);
+                        }
+                        catch( Throwable t ) {
+                            response.receive(new CloudException(t));
+                        }
+                    }
+                    finally {
+                        APITrace.end();
+                    }
+                }
+                finally {
+                    provider.release();
+                }
+            }
+        };
+
+        t.setName(operation);
+        t.setDaemon(true);
+
+        provider.hold();
+        t.start();
+        return response;
+    }
+
+    public @Nonnull APIResponse get(final @Nonnull String operation, final @Nonnull String resource, final @Nullable String id, final @Nonnull DetailLevel details, final @Nullable NameValuePair ... parameters) {
+        final APIResponse response = new APIResponse();
+
+        Thread t = new Thread() {
+            public void run() {
+                try {
+                    APITrace.begin(provider, operation);
+                    try {
+                        try {
+                            get(response, null, 1, resource, id, details, parameters);
+                        }
+                        catch( Throwable t ) {
+                            response.receive(new CloudException(t));
+                        }
+                    }
+                    finally {
+                        APITrace.end();
+                    }
+                }
+                finally {
+                    provider.release();
+                }
+            }
+        };
+
+        t.setName(operation);
+        t.setDaemon(true);
+
+        provider.hold();
+        t.start();
+        return response;
+    }
+
+    private void get(@Nonnull APIResponse apiResponse, @Nullable String paginationId, final int page, final @Nonnull String resource, final @Nullable String id, final @Nonnull DetailLevel details, final @Nullable NameValuePair ... parameters) throws InternalException, CloudException {
         if( logger.isTraceEnabled() ) {
-            logger.trace("ENTER - " + Enstratus.class.getName() + ".get(" + resource + "," + id + "," + Arrays.toString(parameters) + ")");
+            logger.trace("ENTER - " + Enstratus.class.getName() + ".get(" + paginationId + "," + page + "," + resource + "," + id + "," + Arrays.toString(parameters) + ")");
         }
         try {
-            String target = getEndpoint(resource, id, parameters);
+            NameValuePair[] params;
+
+            if( parameters != null && paginationId != null ) {
+                if( parameters == null || parameters.length < 1 ) {
+                    params = new NameValuePair[] { new BasicNameValuePair("requestPaginationId", paginationId), new BasicNameValuePair("requestPage", String.valueOf(page)) };
+                }
+                else {
+                    params = new NameValuePair[parameters.length + 2];
+
+                    int i = 0;
+
+                    for( ; i<parameters.length; i++ ) {
+                        params[i] = parameters[i];
+                    }
+                    params[i++] = new BasicNameValuePair("requestPaginationId", paginationId);
+                    params[i] = new BasicNameValuePair("requestPage", String.valueOf(page));
+                }
+            }
+            else {
+                params = parameters;
+            }
+            String target = getEndpoint(resource, id, params);
 
             if( wire.isDebugEnabled() ) {
                 wire.debug("");
@@ -247,7 +329,7 @@ public class EnstratusMethod {
                     get.addHeader("Accept", "application/json");
                     get.addHeader("x-esauth-signature", signature);
                     get.addHeader("x-esauth-timestamp", String.valueOf(timestamp));
-                    get.addHeader("x-es-details", "basic");
+                    get.addHeader("x-es-details", details.name());
                     //x-es-with-perms: false
                     if( wire.isDebugEnabled() ) {
                         wire.debug(get.getRequestLine().toString());
@@ -286,10 +368,8 @@ public class EnstratusMethod {
                         wire.debug("");
                     }
                     if( status.getStatusCode() == NOT_FOUND ) {
-                        APIResponse r = new APIResponse();
-
-                        r.code = status.getStatusCode();
-                        return r;
+                        apiResponse.receive();
+                        return;
                     }
                     if( status.getStatusCode() != OK ) {
                         logger.error("Expected OK for GET request, got " + status.getStatusCode());
@@ -309,7 +389,7 @@ public class EnstratusMethod {
                             wire.debug(body);
                         }
                         wire.debug("");
-                        throw new EnstratusException(CloudErrorType.GENERAL, status.getStatusCode(), status.getReasonPhrase(), body);
+                        apiResponse.receive(new EnstratusException(CloudErrorType.GENERAL, status.getStatusCode(), status.getReasonPhrase(), body));
                     }
                     else {
                         HttpEntity entity = response.getEntity();
@@ -317,9 +397,27 @@ public class EnstratusMethod {
                         if( entity == null ) {
                             throw new CloudException("No entity was returned from an HTTP GET");
                         }
-                        APIResponse r = new APIResponse();
+                        boolean complete;
 
-                        r.code = status.getStatusCode();
+                        Header h = response.getFirstHeader("x-es-pagination");
+                        final String pid;
+
+                        if( h != null ) {
+                            pid = h.getValue();
+
+                            if( pid != null ) {
+                                Header last = response.getFirstHeader("x-es-last-page");
+
+                                complete = last != null && last.getValue().equalsIgnoreCase("true");
+                            }
+                            else {
+                                complete = true;
+                            }
+                        }
+                        else {
+                            pid = null;
+                            complete = true;
+                        }
                         if( entity.getContentType() == null || entity.getContentType().getValue().contains("json") ) {
                             String body;
 
@@ -335,22 +433,26 @@ public class EnstratusMethod {
                             wire.debug("");
 
                             try {
-                                r.json = new JSONObject(body);
+                                apiResponse.receive(status.getStatusCode(), new JSONObject(body), complete);
                             }
                             catch( JSONException e ) {
                                 throw new CloudException(e);
                             }
-                            return r;
                         }
                         else {
                             try {
-                                r.data = entity.getContent();
+                                apiResponse.receive(status.getStatusCode(), entity.getContent());
                             }
                             catch( IOException e ) {
                                 throw new CloudException(e);
                             }
                         }
-                        return r;
+                        if( !complete ) {
+                            APIResponse r = new APIResponse();
+
+                            apiResponse.setNext(r);
+                            get(r, pid, page+1, resource, id, details, parameters);
+                        }
                     }
                 }
                 finally {
@@ -472,8 +574,9 @@ public class EnstratusMethod {
                 if( id.startsWith("/") ) {
                     stringToSign = stringToSign + id;
                 }
-                else
+                else {
                     stringToSign = stringToSign + "/" + id;
+                }
             }
             stringToSign = stringToSign + ":" + timestamp + ":Dasein Cloud";
 
@@ -614,9 +717,8 @@ public class EnstratusMethod {
                         wire.debug("");
                         APIResponse r = new APIResponse();
 
-                        r.code = status.getStatusCode();
                         try {
-                            r.json = new JSONObject(json);
+                            r.receive(status.getStatusCode(), new JSONObject(json), true);
                         }
                         catch( JSONException e ) {
                             throw new CloudException(e);
@@ -723,7 +825,7 @@ public class EnstratusMethod {
                     if( status.getStatusCode() == NOT_FOUND || status.getStatusCode() == NO_CONTENT ) {
                         APIResponse r = new APIResponse();
 
-                        r.code = status.getStatusCode();
+                        r.receive();
                         return r;
                     }
                     if( status.getStatusCode() != ACCEPTED ) {
@@ -763,9 +865,8 @@ public class EnstratusMethod {
                         wire.debug("");
                         APIResponse r = new APIResponse();
 
-                        r.code = status.getStatusCode();
                         try {
-                            r.json = new JSONObject(json);
+                            r.receive(status.getStatusCode(), new JSONObject(json), true);
                         }
                         catch( JSONException e ) {
                             throw new CloudException(e);
