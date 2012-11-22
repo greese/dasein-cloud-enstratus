@@ -4,6 +4,7 @@ import org.apache.log4j.Logger;
 import org.dasein.cloud.AbstractCloud;
 import org.dasein.cloud.CloudException;
 import org.dasein.cloud.ProviderContext;
+import org.json.JSONObject;
 
 import javax.annotation.Nonnegative;
 import javax.annotation.Nonnull;
@@ -23,10 +24,7 @@ import java.text.SimpleDateFormat;
 public class Enstratus extends AbstractCloud {
     static private final Logger logger = getLogger(Enstratus.class);
 
-    static public class AccountOwner {
-        public String userId;
-        public String login;
-    }
+    static public final String API_KEY = "admin/ApiKey";
 
     static private @Nonnull String getLastItem(@Nonnull String name) {
         int idx = name.lastIndexOf('.');
@@ -37,7 +35,7 @@ public class Enstratus extends AbstractCloud {
         else if( idx == (name.length()-1) ) {
             return "";
         }
-        return name.substring(idx+1);
+        return name.substring(idx + 1);
     }
 
     static public @Nonnull Logger getLogger(@Nonnull Class<?> cls) {
@@ -64,6 +62,11 @@ public class Enstratus extends AbstractCloud {
         String name = (ctx == null ? null : ctx.getCloudName());
 
         return (name == null ? "enStratus" : name);
+    }
+
+    @Override
+    public @Nonnull DataCenters getDataCenterServices() {
+        return new DataCenters(this);
     }
 
     @Override
@@ -100,8 +103,29 @@ public class Enstratus extends AbstractCloud {
                 logger.warn("No context was provided for testing");
                 return null;
             }
-            // TODO: implement me
-            return ctx.getAccountNumber();
+            try {
+                String accessKey = new String(ctx.getAccessPublic(), "utf-8");
+                EnstratusMethod method = new EnstratusMethod(this);
+                EnstratusMethod.APIResponse r = method.get(API_KEY, accessKey);
+
+                if( r.code != EnstratusMethod.OK || r.json == null ) {
+                    return null;
+                }
+                if( r.json.has("account") ) {
+                    JSONObject account = r.json.getJSONObject("account");
+
+                    if( account.has("accountId") ) {
+                        return account.getString("accountId");
+                    }
+                }
+                logger.warn("JSON has no account info");
+                return null;
+            }
+            catch( Throwable t ) {
+                logger.error("Error querying API key: " + t.getMessage());
+                t.printStackTrace();
+                return null;
+            }
         }
         finally {
             if( logger.isTraceEnabled() ) {

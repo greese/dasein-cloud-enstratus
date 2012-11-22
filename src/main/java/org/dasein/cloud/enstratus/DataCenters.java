@@ -16,6 +16,7 @@
  */
 package org.dasein.cloud.enstratus;
 
+import org.apache.http.message.BasicNameValuePair;
 import org.apache.log4j.Logger;
 import org.dasein.cloud.CloudException;
 import org.dasein.cloud.InternalException;
@@ -26,17 +27,17 @@ import org.dasein.cloud.dc.Region;
 import org.dasein.cloud.util.APITrace;
 import org.dasein.cloud.util.Cache;
 import org.dasein.cloud.util.CacheLevel;
+import org.dasein.util.uom.time.Day;
 import org.dasein.util.uom.time.Hour;
 import org.dasein.util.uom.time.TimePeriod;
-import org.w3c.dom.Document;
-import org.w3c.dom.Node;
-import org.w3c.dom.NodeList;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.Locale;
 
 /**
@@ -48,6 +49,9 @@ import java.util.Locale;
  */
 public class DataCenters implements DataCenterServices {
     static private final Logger logger = Enstratus.getLogger(DataCenters.class);
+
+    static public final String DATA_CENTER = "geography/DataCenter";
+    static public final String REGION      = "geography/Region";
 
     private Enstratus provider;
 
@@ -87,19 +91,57 @@ public class DataCenters implements DataCenterServices {
 
     @Override
     public @Nonnull Collection<DataCenter> listDataCenters(@Nonnull String providerRegionId) throws InternalException, CloudException {
-        Region r = getRegion(providerRegionId);
+        APITrace.begin(provider, "listDataCenters");
+        try {
+            Region region = getRegion(providerRegionId);
 
-        if( r == null ) {
-            throw new CloudException("No such region: " + providerRegionId);
+            if( region == null ) {
+                throw new CloudException("No such region: " + providerRegionId);
+            }
+            ProviderContext ctx = provider.getContext();
+
+            if( ctx == null ) {
+                throw new NoContextException();
+            }
+            Cache<DataCenter> cache = Cache.getInstance(provider, "dataCenters", DataCenter.class, CacheLevel.REGION_ACCOUNT, new TimePeriod<Day>(1, TimePeriod.DAY));
+            Collection<DataCenter> dcList = (Collection<DataCenter>)cache.get(ctx);
+
+            if( dcList != null ) {
+                return dcList;
+            }
+            EnstratusMethod method = new EnstratusMethod(provider);
+
+            EnstratusMethod.APIResponse r = method.get(DATA_CENTER, null, new BasicNameValuePair("regionId", providerRegionId));
+
+            if( r.code == EnstratusMethod.OK ) {
+                ArrayList<DataCenter> dataCenters = new ArrayList<DataCenter>();
+
+                if( r.json.has("dataCenters") ) {
+                    try {
+                        JSONArray list = r.json.getJSONArray("dataCenters");
+
+                        for( int i=0; i<list.length(); i++ ) {
+                            DataCenter dc = toDataCenter(list.getJSONObject(i));
+
+                            if( dc != null ) {
+                                dataCenters.add(dc);
+                            }
+                        }
+                    }
+                    catch( JSONException e ) {
+                        logger.error("Invalid JSON from enStratus: " + e.getMessage());
+                        throw new CloudException(e);
+                    }
+                }
+                cache.put(ctx, dataCenters);
+                return dataCenters;
+            }
+            logger.error("No data returned for data centers query, but no error (regionId=" + providerRegionId + ")");
+            throw new CloudException("Failed to identify data centers in " + providerRegionId);
         }
-        DataCenter dc = new DataCenter();
-
-        dc.setActive(r.isActive());
-        dc.setAvailable(r.isAvailable());
-        dc.setName(r.getName());
-        dc.setProviderDataCenterId(providerRegionId);
-        dc.setRegionId(providerRegionId);
-        return Collections.singletonList(dc);
+        finally {
+            APITrace.end();
+        }
     }
 
     @Override
@@ -117,121 +159,121 @@ public class DataCenters implements DataCenterServices {
             if( regions != null ) {
                 return regions;
             }
-            regions = new ArrayList<Region>();
 
             EnstratusMethod method = new EnstratusMethod(provider);
+            EnstratusMethod.APIResponse r = method.get(REGION, null);
 
-            Document xml = method.getObject("clouds");
+            if( r.code == EnstratusMethod.OK ) {
+                regions = new ArrayList<Region>();
+                if( r.json.has("regions") ) {
+                    try {
+                        JSONArray list = r.json.getJSONArray("regions");
 
-            if( xml == null ) {
-                logger.error("Unable to communicate with the Enstratus clouds endpoint");
-                throw new CloudException("Could not communicate with the Enstratus clouds endpoint");
-            }
-            NodeList clouds = xml.getElementsByTagName("cloud");
+                        for( int i=0; i<list.length(); i++ ) {
+                            Region region = toRegion(list.getJSONObject(i));
 
-            for( int i=0; i<clouds.getLength(); i++ ) {
-                Region r = toRegion(method, clouds.item(i));
-
-                if( r != null ) {
-                    regions.add(r);
+                            if( region != null ) {
+                                regions.add(region);
+                            }
+                        }
+                    }
+                    catch( JSONException e ) {
+                        logger.error("Invalid JSON from enStratus: " + e.getMessage());
+                        throw new CloudException(e);
+                    }
                 }
-
+                return regions;
             }
-            cache.put(ctx, regions);
-            return regions;
+            logger.error("The enStratus regions endpoint did not provide any data and did not error");
+            throw new CloudException("Failed to identify regions");
+
         }
         finally {
             APITrace.end();
         }
     }
 
-    private @Nullable Region toRegion(@Nonnull EnstratusMethod method, @Nullable Node xml) throws CloudException, InternalException {
-        if( xml == null ) {
+    private @Nullable DataCenter toDataCenter(@Nullable JSONObject json) throws CloudException, InternalException {
+        if( json == null ) {
             return null;
         }
-        NodeList attributes = xml.getChildNodes();
-        String providerId = null, locationId = null;
 
-        for( int i=0; i<attributes.getLength(); i++ ) {
-            Node attribute = attributes.item(i);
+        DataCenter dc = new DataCenter();
 
-            if( attribute.getNodeName().equalsIgnoreCase("providerId") && attribute.hasChildNodes() ) {
-                providerId = attribute.getFirstChild().getNodeValue().trim();
+        dc.setAvailable(true);
+        try {
+            if( json.has("status") ) {
+                dc.setActive("ACTIVE".equalsIgnoreCase(json.getString("status")));
             }
-            else if( attribute.getNodeName().equalsIgnoreCase("locationId") && attribute.hasChildNodes() ) {
-                locationId = attribute.getFirstChild().getNodeValue().trim();
+            if( json.has("name") ) {
+                dc.setName(json.getString("name"));
             }
-        }
-        if( providerId == null || locationId == null ) {
-            return null;
-        }
-        Document doc = method.getObject("constants/locations/" + locationId);
+            else if( json.has("providerId") ) {
+                dc.setName(json.getString("providerId"));
+            }
+            else if( json.has("description") ) {
+                dc.setName(json.getString("description"));
+            }
+            if( json.has("dataCenterId") ) {
+                dc.setProviderDataCenterId(json.getString("dataCenterId"));
+            }
+            if( json.has("region") ) {
+                JSONObject r = json.getJSONObject("region");
 
-        if( doc == null ) {
-            logger.error("Unable to communicate with the Enstratus locations endpoint");
-            throw new CloudException("Could not communicate with the Enstratus locations endpoint");
-        }
-        NodeList locations = doc.getElementsByTagName("location");
-        String description = null;
-
-        for( int i=0; i<locations.getLength(); i++ ) {
-            Node location = locations.item(i);
-
-            if( location.hasChildNodes() ) {
-                attributes = location.getChildNodes();
-                for( int j=0; j<attributes.getLength(); j++ ) {
-                    Node attribute = attributes.item(j);
-
-                    if( attribute.getNodeName().equalsIgnoreCase("description") && attribute.hasChildNodes() ) {
-                        description = attribute.getFirstChild().getNodeValue().trim();
-                    }
+                if( r.has("regionId") ) {
+                    dc.setRegionId(r.getString("regionId"));
                 }
             }
         }
-        doc = method.getObject("constants/providers/" + providerId);
-
-        if( doc == null ) {
-            logger.error("Unable to communicate with the Enstratus providers endpoint");
-            throw new CloudException("Could not communicate with the Enstratus providers endpoint");
+        catch( JSONException e ) {
+            logger.error("Invalid JSON from enStratus: " + e.getMessage());
+            throw new CloudException(e);
         }
-        NodeList providers = doc.getElementsByTagName("provider");
-        String name = null;
+        if( dc.getProviderDataCenterId() == null || dc.getRegionId() == null ) {
+            return null;
+        }
+        if( dc.getName() == null ) {
+            dc.setName(dc.getProviderDataCenterId());
+        }
+        return dc;
+    }
 
-        for( int i=0; i<providers.getLength(); i++ ) {
-            Node provider = providers.item(i);
-
-            if( provider.hasChildNodes() ) {
-                attributes = provider.getChildNodes();
-                for( int j=0; j<attributes.getLength(); j++ ) {
-                    Node attribute = attributes.item(j);
-
-                    if( attribute.getNodeName().equalsIgnoreCase("name") && attribute.hasChildNodes() ) {
-                        name = attribute.getFirstChild().getNodeValue().trim();
-                    }
-                }
-            }
+    private @Nullable Region toRegion(@Nullable JSONObject json) throws CloudException, InternalException {
+        if( json == null ) {
+            return null;
         }
         Region region = new Region();
 
-        region.setActive(true);
         region.setAvailable(true);
-        region.setJurisdiction("EU");
-        if( name == null && description == null ) {
-            region.setName(locationId + ":" + providerId);
+        try {
+            if( json.has("status") ) {
+                region.setActive("ACTIVE".equalsIgnoreCase(json.getString("status")));
+            }
+            if( json.has("name") ) {
+                region.setName(json.getString("name"));
+            }
+            else if( json.has("providerId") ) {
+                region.setName(json.getString("providerId"));
+            }
+            else if( json.has("description") ) {
+                region.setName(json.getString("description"));
+            }
+            if( json.has("regionId") ) {
+                region.setProviderRegionId(json.getString("regionId"));
+            }
+            if( json.has("jurisdiction") ) {
+                region.setJurisdiction(json.getString("jurisdiction"));
+            }
         }
-        else if( name == null ) {
-            region.setName(description);
+        catch( JSONException e ) {
+            logger.error("Invalid JSON from enStratus: " + e.getMessage());
+            throw new CloudException(e);
         }
-        else if( description == null ) {
-            region.setName(name);
+        if( region.getProviderRegionId() == null ) {
+            return null;
         }
-        else {
-            region.setName(name + " - " + description);
-        }
-        region.setProviderRegionId(locationId + ":" + providerId);
-
-        if( description != null && description.startsWith("eu") ) {
-            region.setJurisdiction("EU");
+        if( region.getName() == null ) {
+            region.setName(region.getProviderRegionId());
         }
         return region;
     }

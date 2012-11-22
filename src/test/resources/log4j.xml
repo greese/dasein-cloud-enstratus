@@ -73,12 +73,12 @@
         <appender-ref ref="ASYNCUNIT" />
     </category>
     
-    <category name="dasein.cloud.zimory.std">
+    <category name="dasein.cloud.enstratus.std">
         <priority value="TRACE" />
         <appender-ref ref="ASYNCDASEIN" />
     </category>
 
-    <category name="dasein.cloud.zimory.wire">
+    <category name="dasein.cloud.enstratus.wire">
         <priority value="DEBUG" />
         <appender-ref ref="ASYNCWIRE" />
     </category>
