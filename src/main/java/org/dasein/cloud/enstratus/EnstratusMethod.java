@@ -28,6 +28,7 @@ import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpDelete;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.methods.HttpPut;
 import org.apache.http.client.utils.URLEncodedUtils;
 import org.apache.http.conn.params.ConnRoutePNames;
 import org.apache.http.entity.StringEntity;
@@ -44,7 +45,6 @@ import org.dasein.cloud.CloudErrorType;
 import org.dasein.cloud.CloudException;
 import org.dasein.cloud.InternalException;
 import org.dasein.cloud.ProviderContext;
-import org.dasein.cloud.enstratus.compute.DetailLevel;
 import org.dasein.cloud.util.APITrace;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -83,7 +83,6 @@ public class EnstratusMethod {
     static public final int CREATED        = 201;
     static public final int ACCEPTED       = 202;
     static public final int NO_CONTENT     = 204;
-    static public final int BAD_REQUEST    = 400;
     static public final int NOT_FOUND      = 404;
 
     private Enstratus provider;
@@ -119,6 +118,20 @@ public class EnstratusMethod {
                         throw new NoContextException();
                     }
                     HttpDelete delete = new HttpDelete(target);
+
+                    long timestamp = System.currentTimeMillis();
+
+                    String signature = getSignature(ctx.getAccessPublic(), ctx.getAccessPrivate(), "DELETE", resource, id, timestamp);
+
+                    try {
+                        delete.addHeader("x-esauth-access", new String(ctx.getAccessPublic(), "utf-8"));
+                    }
+                    catch( UnsupportedEncodingException e ) {
+                        throw new InternalException(e);
+                    }
+                    delete.addHeader("Accept", "application/json");
+                    delete.addHeader("x-esauth-signature", signature);
+                    delete.addHeader("x-esauth-timestamp", String.valueOf(timestamp));
 
                     if( wire.isDebugEnabled() ) {
                         wire.debug(delete.getRequestLine().toString());
@@ -330,7 +343,7 @@ public class EnstratusMethod {
                     get.addHeader("x-esauth-signature", signature);
                     get.addHeader("x-esauth-timestamp", String.valueOf(timestamp));
                     get.addHeader("x-es-details", details.name());
-                    //x-es-with-perms: false
+
                     if( wire.isDebugEnabled() ) {
                         wire.debug(get.getRequestLine().toString());
                         for( Header header : get.getAllHeaders() ) {
@@ -482,11 +495,7 @@ public class EnstratusMethod {
         }
 
         boolean ssl = uri.getScheme().startsWith("https");
-        int targetPort = uri.getPort();
 
-        if( targetPort < 1 ) {
-            targetPort = (ssl ? 443 : 80);
-        }
         HttpParams params = new BasicHttpParams();
 
 
@@ -629,7 +638,19 @@ public class EnstratusMethod {
                         throw new NoContextException();
                     }
                     HttpPost post = new HttpPost(target);
+                    long timestamp = System.currentTimeMillis();
 
+                    String signature = getSignature(ctx.getAccessPublic(), ctx.getAccessPrivate(), "POST", resource, null, timestamp);
+
+                    try {
+                        post.addHeader("x-esauth-access", new String(ctx.getAccessPublic(), "utf-8"));
+                    }
+                    catch( UnsupportedEncodingException e ) {
+                        throw new InternalException(e);
+                    }
+                    post.addHeader("Accept", "application/json");
+                    post.addHeader("x-esauth-signature", signature);
+                    post.addHeader("x-esauth-timestamp", String.valueOf(timestamp));
                     post.addHeader("Content-type", "application/json;charset=utf-8");
                     try {
                         post.setEntity(new StringEntity(json, "utf-8"));
@@ -773,11 +794,25 @@ public class EnstratusMethod {
                     if( ctx == null ) {
                         throw new NoContextException();
                     }
-                    HttpPost post = new HttpPost(target);
+                    HttpPut put = new HttpPut(target);
 
-                    post.addHeader("Content-type", "application/json;charset=utf-8");
+                    long timestamp = System.currentTimeMillis();
+
+                    String signature = getSignature(ctx.getAccessPublic(), ctx.getAccessPrivate(), "PUT", resource, id, timestamp);
+
                     try {
-                        post.setEntity(new StringEntity(json, "utf-8"));
+                        put.addHeader("x-esauth-access", new String(ctx.getAccessPublic(), "utf-8"));
+                    }
+                    catch( UnsupportedEncodingException e ) {
+                        throw new InternalException(e);
+                    }
+                    put.addHeader("Accept", "application/json");
+                    put.addHeader("x-esauth-signature", signature);
+                    put.addHeader("x-esauth-timestamp", String.valueOf(timestamp));
+
+                    put.addHeader("Content-type", "application/json;charset=utf-8");
+                    try {
+                        put.setEntity(new StringEntity(json, "utf-8"));
                     }
                     catch( UnsupportedEncodingException e ) {
                         logger.error("Unsupported encoding UTF-8: " + e.getMessage());
@@ -785,8 +820,8 @@ public class EnstratusMethod {
                     }
 
                     if( wire.isDebugEnabled() ) {
-                        wire.debug(post.getRequestLine().toString());
-                        for( Header header : post.getAllHeaders() ) {
+                        wire.debug(put.getRequestLine().toString());
+                        for( Header header : put.getAllHeaders() ) {
                             wire.debug(header.getName() + ": " + header.getValue());
                         }
                         wire.debug("");
@@ -798,7 +833,7 @@ public class EnstratusMethod {
 
                     try {
                         APITrace.trace(provider, "PUT " + resource);
-                        response = client.execute(post);
+                        response = client.execute(put);
                         status = response.getStatusLine();
                     }
                     catch( IOException e ) {

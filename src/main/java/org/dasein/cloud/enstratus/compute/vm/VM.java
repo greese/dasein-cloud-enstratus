@@ -20,6 +20,7 @@ import org.apache.http.message.BasicNameValuePair;
 import org.apache.log4j.Logger;
 import org.dasein.cloud.CloudException;
 import org.dasein.cloud.InternalException;
+import org.dasein.cloud.OperationNotSupportedException;
 import org.dasein.cloud.ProviderContext;
 import org.dasein.cloud.Requirement;
 import org.dasein.cloud.ResourceStatus;
@@ -39,11 +40,20 @@ import org.dasein.cloud.enstratus.APIResponse;
 import org.dasein.cloud.enstratus.Enstratus;
 import org.dasein.cloud.enstratus.EnstratusMethod;
 import org.dasein.cloud.enstratus.NoContextException;
-import org.dasein.cloud.enstratus.compute.DetailLevel;
+import org.dasein.cloud.enstratus.DetailLevel;
 import org.dasein.cloud.identity.ServiceAction;
 import org.dasein.cloud.network.NetworkServices;
 import org.dasein.cloud.network.Subnet;
 import org.dasein.cloud.network.VLANSupport;
+import org.dasein.cloud.util.APITrace;
+import org.dasein.cloud.util.Cache;
+import org.dasein.cloud.util.CacheLevel;
+import org.dasein.util.uom.storage.Gigabyte;
+import org.dasein.util.uom.storage.Megabyte;
+import org.dasein.util.uom.storage.Storage;
+import org.dasein.util.uom.time.Day;
+import org.dasein.util.uom.time.Hour;
+import org.dasein.util.uom.time.TimePeriod;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -52,8 +62,10 @@ import javax.annotation.Nonnegative;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Locale;
+import java.util.Map;
 import java.util.TreeSet;
 
 /**
@@ -66,7 +78,8 @@ import java.util.TreeSet;
 public class VM implements VirtualMachineSupport {
     static private final Logger logger = Enstratus.getLogger(VM.class);
 
-    static public final String SERVER = "infrastructure/Server";
+    static public final String SERVER         = "infrastructure/Server";
+    static public final String SERVER_PRODUCT = "infrastructure/ServerProduct";
 
     private Enstratus provider;
 
@@ -109,7 +122,14 @@ public class VM implements VirtualMachineSupport {
 
     @Override
     public VirtualMachineProduct getProduct(@Nonnull String productId) throws InternalException, CloudException {
-        return null;  //To change body of implemented methods use File | Settings | File Templates.
+        for( Architecture architecture : listSupportedArchitectures() ) {
+            for( VirtualMachineProduct product : listProducts(architecture) ) {
+                if( productId.equals(product.getProviderProductId()) ) {
+                    return product;
+                }
+            }
+        }
+        return null;
     }
 
     @Override
@@ -119,7 +139,40 @@ public class VM implements VirtualMachineSupport {
 
     @Override
     public VirtualMachine getVirtualMachine(@Nonnull String vmId) throws InternalException, CloudException {
-        return null;  //To change body of implemented methods use File | Settings | File Templates.
+        ProviderContext ctx = provider.getContext();
+
+        if( ctx == null ) {
+            throw new NoContextException();
+        }
+        EnstratusMethod method = new EnstratusMethod(provider);
+        APIResponse r = method.get("getVirtualMachine", SERVER, vmId);
+
+        if( r.getCode() == EnstratusMethod.NOT_FOUND ) {
+            return null;
+        }
+        if( r.getCode() != EnstratusMethod.OK ) {
+            throw new CloudException("No error and no response: " + r.getCode());
+        }
+        JSONObject json = r.getJSON();
+
+        if( json.has("servers") ) {
+            try {
+                JSONArray list = json.getJSONArray("servers");
+
+                for( int i=0; i<list.length(); i++ ) {
+                    VirtualMachine vm = toVirtualMachine(list.getJSONObject(i));
+
+                    if( vm != null ) {
+                        return vm;
+                    }
+                }
+            }
+            catch( JSONException e ) {
+                logger.error("Received invalid JSON from enStratus: " + e.getMessage());
+                throw new CloudException(e);
+            }
+        }
+        return null;
     }
 
     @Override
@@ -145,12 +198,12 @@ public class VM implements VirtualMachineSupport {
 
     @Override
     public @Nonnull Requirement identifyRootVolumeRequirement() throws CloudException, InternalException {
-        return null;  //To change body of implemented methods use File | Settings | File Templates.
+        return Requirement.NONE;
     }
 
     @Override
     public @Nonnull Requirement identifyShellKeyRequirement() throws CloudException, InternalException {
-        return null;  //To change body of implemented methods use File | Settings | File Templates.
+        return Requirement.OPTIONAL;
     }
 
     @Override
@@ -160,7 +213,7 @@ public class VM implements VirtualMachineSupport {
 
     @Override
     public @Nonnull Requirement identifyVlanRequirement() throws CloudException, InternalException {
-        return null;  //To change body of implemented methods use File | Settings | File Templates.
+        return Requirement.NONE;
     }
 
     @Override
@@ -170,12 +223,12 @@ public class VM implements VirtualMachineSupport {
 
     @Override
     public boolean isBasicAnalyticsSupported() throws CloudException, InternalException {
-        return false;  //To change body of implemented methods use File | Settings | File Templates.
+        return false;
     }
 
     @Override
     public boolean isExtendedAnalyticsSupported() throws CloudException, InternalException {
-        return false;  //To change body of implemented methods use File | Settings | File Templates.
+        return false;
     }
 
     @Override
@@ -190,7 +243,95 @@ public class VM implements VirtualMachineSupport {
 
     @Override
     public @Nonnull VirtualMachine launch(@Nonnull VMLaunchOptions withLaunchOptions) throws CloudException, InternalException {
-        return null;  //To change body of implemented methods use File | Settings | File Templates.
+        ArrayList<Map<String,Object>> servers = new ArrayList<Map<String, Object>>();
+        HashMap<String,Object> request = new HashMap<String, Object>();
+        HashMap<String,Object> tmp;
+
+        request.put("launch", servers);
+
+        HashMap<String,Object> server = new HashMap<String,Object>();
+
+        servers.add(server);
+
+        tmp = new HashMap<String, Object>();
+        tmp.put("machineImageId", withLaunchOptions.getMachineImageId());
+        server.put("machineImage", tmp);
+        server.put("name", withLaunchOptions.getFriendlyName());
+        server.put("description", withLaunchOptions.getDescription());
+
+        if( withLaunchOptions.getDataCenterId() != null ) {
+            tmp = new HashMap<String, Object>();
+            tmp.put("dataCenterId", withLaunchOptions.getDataCenterId());
+            server.put("dataCenter", tmp);
+        }
+        if( withLaunchOptions.getFirewallIds().length > 0 ) {
+            ArrayList<Map<String,Object>> list = new ArrayList<Map<String, Object>>();
+
+            for( String id : withLaunchOptions.getFirewallIds() ) {
+                HashMap<String,Object> fw = new HashMap<String, Object>();
+
+                fw.put("firewallId", id);
+                list.add(fw);
+            }
+            server.put("firewalls", list);
+        }
+        tmp = new HashMap<String, Object>();
+        tmp.put("productId", withLaunchOptions.getStandardProductId());
+        server.put("product", tmp);
+
+        String meta = (String)withLaunchOptions.getMetaData().get("label");
+
+        if( meta != null ) {
+            server.put("label", meta);
+        }
+        meta = (String)withLaunchOptions.getMetaData().get("budget");
+        if( meta != null ) {
+            server.put("budget", meta);
+        }
+        else {
+            server.put("budget", provider.findBudget());
+        }
+        String json = (new JSONObject(request)).toString();
+        EnstratusMethod method = new EnstratusMethod(provider);
+
+        APIResponse response = method.post(SERVER, json);
+        JSONObject j = response.getJSON();
+
+        if( response.getCode() == EnstratusMethod.ACCEPTED ) {
+            String id = provider.waitForJob("launchVM", response.getJSON());
+
+            if( id == null ) {
+                throw new CloudException("VM launch completed without providing a VM ID");
+            }
+            VirtualMachine vm =  getVirtualMachine(id);
+
+            if( vm == null ) {
+                throw new CloudException("Launched VM " + id + " does not exist");
+            }
+            return vm;
+        }
+        else if( response.getCode() == EnstratusMethod.CREATED ) {
+            if( j.has("servers") ) {
+                try {
+                    j = j.getJSONArray("servers").getJSONObject(0);
+                    if( j.has("serverId") ) {
+                        VirtualMachine vm =  getVirtualMachine(j.getString("serverId"));
+
+                        if( vm == null ) {
+                            throw new CloudException("Launched VM " + j.getString("serverId") + " does not exist");
+                        }
+                        return vm;
+                    }
+                }
+                catch( JSONException e ) {
+                    throw new CloudException(e);
+                }
+            }
+            throw new CloudException("No servers were returned from the server as a result of the launch");
+        }
+        else {
+            throw new CloudException("Unxpected response: " + response.getCode());
+        }
     }
 
     @Override
@@ -248,17 +389,111 @@ public class VM implements VirtualMachineSupport {
     @Nonnull
     @Override
     public Iterable<String> listFirewalls(@Nonnull String vmId) throws InternalException, CloudException {
-        return null;  //To change body of implemented methods use File | Settings | File Templates.
+        return Collections.emptyList();
     }
 
     @Override
     public Iterable<VirtualMachineProduct> listProducts(Architecture architecture) throws InternalException, CloudException {
-        return null;  //To change body of implemented methods use File | Settings | File Templates.
+        ProviderContext ctx = provider.getContext();
+
+        if( ctx == null ) {
+            throw new NoContextException();
+        }
+        Cache<VirtualMachineProduct> cache = Cache.getInstance(provider, "serverProducts." + architecture.name(), VirtualMachineProduct.class, CacheLevel.REGION_ACCOUNT, new TimePeriod<Hour>(6, TimePeriod.HOUR));
+        Iterable<VirtualMachineProduct> products = cache.get(ctx);
+
+        if( products != null ) {
+            return products;
+        }
+        EnstratusMethod method = new EnstratusMethod(provider);
+        ArrayList<VirtualMachineProduct> prdList = new ArrayList<VirtualMachineProduct>();
+        APIResponse r = null;
+
+        do {
+            if( r == null ) {
+                r = method.get("listServerProducts", SERVER_PRODUCT, null, new BasicNameValuePair("regionId", ctx.getRegionId()));
+            }
+            else {
+                r = r.next();
+            }
+            if( r.getCode() != EnstratusMethod.OK ) {
+                throw new CloudException("No error and no response: " + r.getCode());
+            }
+            JSONObject json = r.getJSON();
+
+            if( json.has("serverProducts") ) {
+                try {
+                    JSONArray list = json.getJSONArray("serverProducts");
+
+                    for( int i=0; i<list.length(); i++ ) {
+                        VirtualMachineProduct prd = toProduct(list.getJSONObject(i), architecture);
+
+                        if( prd != null ) {
+                            prdList.add(prd);
+                        }
+                    }
+
+                }
+                catch( JSONException e ) {
+                    logger.error("Received invalid JSON from enStratus: " + e.getMessage());
+                    throw new CloudException(e);
+                }
+            }
+        } while( !r.isComplete() );
+        cache.put(ctx, prdList);
+        return prdList;
     }
 
     @Override
     public Iterable<Architecture> listSupportedArchitectures() throws InternalException, CloudException {
-        return null;  //To change body of implemented methods use File | Settings | File Templates.
+        ProviderContext ctx = provider.getContext();
+
+        if( ctx == null ) {
+            throw new NoContextException();
+        }
+        Cache<Architecture> cache = Cache.getInstance(provider, "architectures", Architecture.class, CacheLevel.REGION_ACCOUNT, new TimePeriod<Day>(1, TimePeriod.DAY));
+        Iterable<Architecture> architectures = cache.get(ctx);
+
+        if( architectures != null ) {
+            return architectures;
+        }
+        EnstratusMethod method = new EnstratusMethod(provider);
+        TreeSet<Architecture> aList = new TreeSet<Architecture>();
+        APIResponse r = null;
+
+        do {
+            if( r == null ) {
+                r = method.get("listSupportedArchitectures", SERVER_PRODUCT, null, new BasicNameValuePair("regionId", ctx.getRegionId()));
+            }
+            else {
+                r = r.next();
+            }
+            if( r.getCode() != EnstratusMethod.OK ) {
+                throw new CloudException("No error and no response: " + r.getCode());
+            }
+            JSONObject json = r.getJSON();
+
+            if( json.has("serverProducts") ) {
+                try {
+                    JSONArray list = json.getJSONArray("serverProducts");
+
+                    for( int i=0; i<list.length(); i++ ) {
+                        JSONObject prd = list.getJSONObject(i);
+
+                        if( prd.has("architecture") ) {
+                            aList.add(Architecture.valueOf(prd.getString("architecture")));
+                        }
+                    }
+
+                }
+                catch( JSONException e ) {
+                    logger.error("Received invalid JSON from enStratus: " + e.getMessage());
+                    throw new CloudException(e);
+                }
+            }
+        } while( !r.isComplete() );
+        cache.put(ctx, aList);
+        return aList;
     }
 
     @Override
@@ -295,7 +530,6 @@ public class VM implements VirtualMachineSupport {
                             vms.add(vm);
                         }
                     }
-                    return vms;
                 }
                 catch( JSONException e ) {
                     logger.error("Received invalid JSON from enStratus: " + e.getMessage());
@@ -358,7 +592,7 @@ public class VM implements VirtualMachineSupport {
 
     @Override
     public void pause(@Nonnull String vmId) throws InternalException, CloudException {
-        //To change body of implemented methods use File | Settings | File Templates.
+        throw new OperationNotSupportedException("Pause is not currently supported in enStratus");
     }
 
     @Override
@@ -368,22 +602,50 @@ public class VM implements VirtualMachineSupport {
 
     @Override
     public void resume(@Nonnull String vmId) throws CloudException, InternalException {
-        //To change body of implemented methods use File | Settings | File Templates.
+        throw new OperationNotSupportedException("Resume is not currently supported in enStratus");
     }
 
     @Override
     public void start(@Nonnull String vmId) throws InternalException, CloudException {
-        //To change body of implemented methods use File | Settings | File Templates.
+        APITrace.begin(provider, "startVM");
+        try {
+            EnstratusMethod method = new EnstratusMethod(provider);
+            HashMap<String,Object> action = new HashMap<String, Object>();
+            ArrayList<Map<String,Object>> servers = new ArrayList<Map<String, Object>>();
+            HashMap<String,Object> server = new HashMap<String, Object>();
+
+            server.put("serverId", vmId);
+            servers.add(server);
+            action.put("start", servers);
+            method.put(SERVER, vmId, (new JSONObject(action)).toString());
+        }
+        finally {
+            APITrace.end();
+        }
     }
 
     @Override
     public void stop(@Nonnull String vmId) throws InternalException, CloudException {
-        //To change body of implemented methods use File | Settings | File Templates.
+        APITrace.begin(provider, "stopVM");
+        try {
+            EnstratusMethod method = new EnstratusMethod(provider);
+            HashMap<String,Object> action = new HashMap<String, Object>();
+            ArrayList<Map<String,Object>> servers = new ArrayList<Map<String, Object>>();
+            HashMap<String,Object> server = new HashMap<String, Object>();
+
+            server.put("serverId", vmId);
+            servers.add(server);
+            action.put("pause", servers);
+            method.put(SERVER, vmId, (new JSONObject(action)).toString());
+        }
+        finally {
+            APITrace.end();
+        }
     }
 
     @Override
     public boolean supportsAnalytics() throws CloudException, InternalException {
-        return false;  //To change body of implemented methods use File | Settings | File Templates.
+        return false;
     }
 
     @Override
@@ -403,12 +665,20 @@ public class VM implements VirtualMachineSupport {
 
     @Override
     public void suspend(@Nonnull String vmId) throws CloudException, InternalException {
-        //To change body of implemented methods use File | Settings | File Templates.
+        throw new OperationNotSupportedException("Suspend is not supported in enStratus");
     }
 
     @Override
     public void terminate(@Nonnull String vmId) throws InternalException, CloudException {
-        //To change body of implemented methods use File | Settings | File Templates.
+        APITrace.begin(provider, "terminateVM");
+        try {
+            EnstratusMethod method = new EnstratusMethod(provider);
+
+            method.delete(SERVER, vmId);
+        }
+        finally {
+            APITrace.end();
+        }
     }
 
     private @Nonnull VmState toState(@Nonnull String state) {
@@ -444,9 +714,61 @@ public class VM implements VirtualMachineSupport {
         return new ResourceStatus(id, state);
     }
 
+    private @Nullable VirtualMachineProduct toProduct(@Nonnull JSONObject json, @Nullable Architecture architecture) throws CloudException, InternalException {
+        VirtualMachineProduct prd = new VirtualMachineProduct();
+        Architecture actual = null;
+
+        try {
+            if( json.has("productId") ) {
+                prd.setProviderProductId(json.getString("productId"));
+            }
+            if( json.has("name") ) {
+                prd.setName(json.getString("name"));
+            }
+            if( json.has("description") ) {
+                prd.setDescription(json.getString("description"));
+            }
+            if( json.has("diskSizeInGb") ) {
+                prd.setRootVolumeSize(new Storage<Gigabyte>(json.getInt("diskSizeInGb"), Storage.GIGABYTE));
+            }
+            if( json.has("ramInMb") ) {
+                prd.setRamSize(new Storage<Megabyte>(json.getInt("ramInMb"), Storage.MEGABYTE));
+            }
+            if( json.has("architecture") ) {
+                actual = Architecture.valueOf(json.getString("architecture"));
+            }
+            if( json.has("hourlyRate") ) {
+                prd.setStandardHourlyRate((float)json.getDouble("hourlyRate"));
+            }
+            if( json.has("cpuCount") ) {
+                prd.setCpuCount(json.getInt("cpuCount"));
+            }
+        }
+        catch( JSONException e ) {
+            logger.error("Invalid JSON from enStratus: " + e.getMessage());
+            throw new CloudException(e);
+        }
+        if( prd.getProviderProductId() == null || (architecture != null && !architecture.equals(actual)) ) {
+            return null;
+        }
+        if( prd.getName() == null ) {
+            prd.setName(prd.getProviderProductId());
+        }
+        if( prd.getDescription() == null ) {
+            prd.setDescription(prd.getName());
+        }
+        return prd;
+    }
     private @Nullable VirtualMachine toVirtualMachine(@Nonnull JSONObject json) throws CloudException, InternalException {
+        ProviderContext ctx = provider.getContext();
+
+        if( ctx == null ) {
+            throw new NoContextException();
+        }
+
         VirtualMachine vm = new VirtualMachine();
 
+        vm.setProviderOwnerId(ctx.getAccountNumber());
         try {
             if( json.has("serverId") ) {
                 vm.setProviderVirtualMachineId(json.getString("serverId"));
@@ -555,6 +877,6 @@ public class VM implements VirtualMachineSupport {
 
     @Override
     public void unpause(@Nonnull String vmId) throws CloudException, InternalException {
-        //To change body of implemented methods use File | Settings | File Templates.
+        throw new OperationNotSupportedException("Unpause is not currently supported in enStratus");
     }
 }

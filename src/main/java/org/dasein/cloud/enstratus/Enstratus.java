@@ -3,8 +3,12 @@ package org.dasein.cloud.enstratus;
 import org.apache.log4j.Logger;
 import org.dasein.cloud.AbstractCloud;
 import org.dasein.cloud.CloudException;
+import org.dasein.cloud.InternalException;
 import org.dasein.cloud.ProviderContext;
 import org.dasein.cloud.enstratus.compute.Compute;
+import org.dasein.util.CalendarWrapper;
+import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import javax.annotation.Nonnegative;
@@ -25,7 +29,9 @@ import java.text.SimpleDateFormat;
 public class Enstratus extends AbstractCloud {
     static private final Logger logger = getLogger(Enstratus.class);
 
-    static public final String API_KEY = "admin/ApiKey";
+    static public final String API_KEY      = "admin/ApiKey";
+    static public final String BILLING_CODE = "admin/BillingCode";
+    static public final String JOB          = "admin/Job";
 
     static private @Nonnull String getLastItem(@Nonnull String name) {
         int idx = name.lastIndexOf('.');
@@ -56,6 +62,56 @@ public class Enstratus extends AbstractCloud {
     }
 
     public Enstratus() { }
+
+    public @Nonnull String findBudget() throws CloudException, InternalException {
+        EnstratusMethod method = new EnstratusMethod(this);
+        APIResponse r = null;
+        String any = null;
+
+        do {
+            if( r == null ) {
+                r = method.get("findBudget", BILLING_CODE, null);
+            }
+            else {
+                r = r.next();
+            }
+            if( r.getCode() != EnstratusMethod.OK ) {
+                throw new CloudException("No error and no response: " + r.getCode());
+            }
+            JSONObject json = r.getJSON();
+
+            if( json.has("billingCodes") ) {
+                try {
+                    JSONArray list = json.getJSONArray("billingCodes");
+
+                    for( int i=0; i<list.length(); i++ ) {
+                        JSONObject budget = list.getJSONObject(i);
+
+                        if( budget.has("billingCodeId") && budget.has("status") && budget.getString("status").equalsIgnoreCase("active") ) {
+                            if( budget.has("budgetState") && !budget.getString("budgetState").equals("HARD_ALARM") ) {
+                                if( budget.getString("budgetState").equals("NORMAL") ) {
+                                    return budget.getString("billingCodeId");
+                                }
+                                else if( any == null ) {
+                                    any = budget.getString("billingCodeId");
+                                }
+                            }
+                        }
+
+                    }
+
+                }
+                catch( JSONException e ) {
+                    logger.error("Received invalid JSON from enStratus: " + e.getMessage());
+                    throw new CloudException(e);
+                }
+            }
+        } while( !r.isComplete() );
+        if( any != null ) {
+            return any;
+        }
+        throw new CloudException("Unable to identify a billable budget to assign to this operation");
+    }
 
     @Override
     public @Nonnull String getCloudName() {
@@ -138,5 +194,64 @@ public class Enstratus extends AbstractCloud {
                 logger.trace("EXIT - " + Enstratus.class.getName() + ".textContext()");
             }
         }
+    }
+
+    public @Nullable String waitForJob(@Nonnull String operation, @Nonnull JSONObject json) throws CloudException, InternalException {
+        if( json.has("jobs") ) {
+            try {
+                JSONObject job = json.getJSONArray("jobs").getJSONObject(0);
+                String jobId = null, status = null;
+
+                if( job.has("jobId") ) {
+                    jobId = job.getString("jobId");
+                }
+                if( job.has("status") ) {
+                    status = job.getString("status");
+                }
+                if( jobId == null || status == null ) {
+                    throw new CloudException("Invalid job object");
+                }
+                if( status.equals("COMPLETE") ) {
+                    if( job.has("message") ) {
+                        return job.getString("message");
+                    }
+                    else {
+                        return null;
+                    }
+                }
+                else if( status.equals("ERROR") ) {
+                    if( job.has("message") ) {
+                        throw new CloudException(job.getString("message"));
+                    }
+                    else {
+                        throw new CloudException("Job failed without any message");
+                    }
+                }
+                else {
+                    try { Thread.sleep(15000L); }
+                    catch( InterruptedException ignore ) { }
+                    long timeout = System.currentTimeMillis() + (5* CalendarWrapper.MINUTE);
+
+                    while( timeout > System.currentTimeMillis() ) {
+                        EnstratusMethod method = new EnstratusMethod(this);
+                        APIResponse response = method.get(operation, JOB, jobId);
+
+                        if( response.getCode() == EnstratusMethod.OK ) {
+                            return waitForJob(operation, response.getJSON());
+                        }
+                        else {
+                            try { Thread.sleep(15000L); }
+                            catch( InterruptedException ignore ) { }
+                        }
+                    }
+                    throw new CloudException("Could not determine job status for job " + jobId);
+                }
+            }
+            catch( JSONException e ) {
+                logger.error("Invalid JSON from enStratus: " + e.getMessage());
+                throw new CloudException(e);
+            }
+        }
+        throw new CloudException("No jobs in response");
     }
 }

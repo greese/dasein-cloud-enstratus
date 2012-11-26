@@ -20,6 +20,7 @@ import org.apache.log4j.Logger;
 import org.dasein.cloud.compute.AbstractComputeServices;
 import org.dasein.cloud.enstratus.Enstratus;
 import org.dasein.cloud.enstratus.Subscription;
+import org.dasein.cloud.enstratus.compute.image.MachineImages;
 import org.dasein.cloud.enstratus.compute.vm.VM;
 
 import javax.annotation.Nonnull;
@@ -39,6 +40,22 @@ public class Compute extends AbstractComputeServices {
     private Enstratus provider;
 
     public Compute(@Nonnull Enstratus provider) { this.provider = provider; }
+
+    @Override
+    public @Nullable MachineImages getImageSupport() {
+        try {
+            Subscription s = Subscription.getSubscription(provider);
+
+            if( s.isSubscribedMachineImage() ) {
+                return new MachineImages(provider);
+            }
+            return null;
+        }
+        catch( Throwable t ) {
+            logger.error("Failed to load subscription for this region: " + t.getMessage());
+            return null;
+        }
+    }
 
     @Override
     public @Nullable VM getVirtualMachineSupport() {

@@ -103,6 +103,7 @@ public class Subscription {
             if( json.has("regionId") ) {
                 s.regionId = json.getString("regionId");
             }
+            s.subscribedMachineImage = json.has("subscribedMachineImage") && json.getBoolean("subscribedMachineImage");
             s.subscribedVirtualMachine = json.has("subscribedServer") && json.getBoolean("subscribedServer");
         }
         catch( JSONException e ) {
@@ -115,12 +116,17 @@ public class Subscription {
     }
 
     private String  regionId;
+    private boolean subscribedMachineImage;
     private boolean subscribedVirtualMachine;
 
     private Subscription() { }
 
     public @Nonnull String getRegionId() {
         return regionId;
+    }
+
+    public boolean isSubscribedMachineImage() {
+        return subscribedMachineImage;
     }
 
     public boolean isSubscribedVirtualMachine() {

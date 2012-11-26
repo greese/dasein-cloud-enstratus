@@ -14,7 +14,7 @@
  *  enStratus Networks Inc.
  * ====================================================================
  */
-package org.dasein.cloud.enstratus.compute;
+package org.dasein.cloud.enstratus;
 
 /**
  * Represents the different degrees of detail in enStratus API responses.
