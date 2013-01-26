@@ -116,6 +116,11 @@ public class VM implements VirtualMachineSupport {
     }
 
     @Override
+    public int getCostFactor(@Nonnull VmState state) throws InternalException, CloudException {
+        return 0;  //To change body of implemented methods use File | Settings | File Templates.
+    }
+
+    @Override
     public int getMaximumVirtualMachineCount() throws CloudException, InternalException {
         return -2;
     }
@@ -196,6 +201,12 @@ public class VM implements VirtualMachineSupport {
         return Requirement.NONE;
     }
 
+    @Nonnull
+    @Override
+    public Requirement identifyPasswordRequirement(Platform platform) throws CloudException, InternalException {
+        return null;  //To change body of implemented methods use File | Settings | File Templates.
+    }
+
     @Override
     public @Nonnull Requirement identifyRootVolumeRequirement() throws CloudException, InternalException {
         return Requirement.NONE;
@@ -204,6 +215,12 @@ public class VM implements VirtualMachineSupport {
     @Override
     public @Nonnull Requirement identifyShellKeyRequirement() throws CloudException, InternalException {
         return Requirement.OPTIONAL;
+    }
+
+    @Nonnull
+    @Override
+    public Requirement identifyShellKeyRequirement(Platform platform) throws CloudException, InternalException {
+        return null;  //To change body of implemented methods use File | Settings | File Templates.
     }
 
     @Override
@@ -644,6 +661,11 @@ public class VM implements VirtualMachineSupport {
     }
 
     @Override
+    public void stop(@Nonnull String vmId, boolean force) throws InternalException, CloudException {
+        //To change body of implemented methods use File | Settings | File Templates.
+    }
+
+    @Override
     public boolean supportsAnalytics() throws CloudException, InternalException {
         return false;
     }
@@ -878,5 +900,10 @@ public class VM implements VirtualMachineSupport {
     @Override
     public void unpause(@Nonnull String vmId) throws CloudException, InternalException {
         throw new OperationNotSupportedException("Unpause is not currently supported in enStratus");
+    }
+
+    @Override
+    public void updateTags(@Nonnull String vmId, @Nonnull Tag... tags) throws CloudException, InternalException {
+        //To change body of implemented methods use File | Settings | File Templates.
     }
 }

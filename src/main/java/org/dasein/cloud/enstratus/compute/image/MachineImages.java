@@ -24,6 +24,7 @@ import org.dasein.cloud.InternalException;
 import org.dasein.cloud.ProviderContext;
 import org.dasein.cloud.Requirement;
 import org.dasein.cloud.ResourceStatus;
+import org.dasein.cloud.Tag;
 import org.dasein.cloud.compute.Architecture;
 import org.dasein.cloud.compute.ImageClass;
 import org.dasein.cloud.compute.ImageCreateOptions;
@@ -109,7 +110,7 @@ public class MachineImages implements MachineImageSupport {
 
     @Override
     public @Nonnull String getProviderTermForImage(@Nonnull Locale locale) {
-        return "machine image";
+        return getProviderTermForImage(locale, ImageClass.MACHINE);
     }
 
     @Override
@@ -120,6 +121,11 @@ public class MachineImages implements MachineImageSupport {
             case RAMDISK: return "ramdisk image";
         }
         return "machine image";
+    }
+
+    @Override
+    public @Nonnull String getProviderTermForCustomImage(@Nonnull Locale locale, @Nonnull ImageClass cls) {
+        return getProviderTermForImage(locale, cls);
     }
 
     @Override
@@ -384,6 +390,11 @@ public class MachineImages implements MachineImageSupport {
     }
 
     @Override
+    public void remove(@Nonnull String providerImageId, boolean checkState) throws CloudException, InternalException {
+        //To change body of implemented methods use File | Settings | File Templates.
+    }
+
+    @Override
     public void removeAllImageShares(@Nonnull String providerImageId) throws CloudException, InternalException {
         //To change body of implemented methods use File | Settings | File Templates.
     }
@@ -473,6 +484,11 @@ public class MachineImages implements MachineImageSupport {
     @Override
     public boolean supportsPublicLibrary(@Nonnull ImageClass cls) throws CloudException, InternalException {
         return false;
+    }
+
+    @Override
+    public void updateTags(@Nonnull String imageId, @Nonnull Tag... tags) throws CloudException, InternalException {
+        //To change body of implemented methods use File | Settings | File Templates.
     }
 
     @Override
